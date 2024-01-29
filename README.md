@@ -15,9 +15,9 @@ To fix a bug `Fork` the `QSU2`, `Edit` the code and make the appropriate change,
 it.
 
 ## Contributors
-* Syed Mafooq Ul Hassan, [KIOS Research Center for Intelligent Systems and Networks, University of Cyprus](http://www.kios.ucy.ac.cy/)
-* Marios Kyriakou, [KIOS Research Center for Intelligent Systems and Networks, University of Cyprus](http://www.kios.ucy.ac.cy/)
-* Demetrios Eliades, [KIOS Research Center for Intelligent Systems and Networks, University of Cyprus](http://www.kios.ucy.ac.cy/)
+* Syed Mafooq Ul Hassan, [KIOS Research and Innovation Center of Excellence, University of Cyprus](http://www.kios.ucy.ac.cy/)
+* Marios Kyriakou, [KIOS Research and Innovation Center of Excellence, University of Cyprus](http://www.kios.ucy.ac.cy/)
+* Demetrios Eliades, [KIOS Research and Innovation Center of Excellence, University of Cyprus](http://www.kios.ucy.ac.cy/)
 
 ## Contributing
 If you want to contribute, please check out our [Code of Conduct](https://github.com/KIOS-Research/QSU2/CODE_OF_CONDUCT.md). Everyone is welcome to contribute whether reporting a new [issue](https://github.com/KIOS-Research/QSU2/issues), suggesting a new feature, or writing code. If you want to contribute code, you can create a new fork in the repo to your own account. Make your commits on your dev branch (based on dev) and when you are finished then you can create a [pull request](https://github.com/KIOS-Research/QSU2/pulls) to test the code and discuss your changes.
