@@ -1,0 +1,48 @@
+# This file contains metadata for your plugin.
+
+# This file should be included when you package your plugin.# Mandatory items:
+
+[general]
+name=QSU2
+qgisMinimumVersion=3.0
+description=QSU2 for CFD simulations
+version=0.1
+author=Syed Mafooq Ul Hassan, Marios S. Kyriakou, Demetrios G. Eliades, KIOS Research and Innovation Center of Excellence (KIOS CoE)
+email=hassan.syed@ucy.ac.cy, mkiria01@ucy.ac.cy, eldemet@ucy.ac.cy
+
+about=QSU2 is an open-source QGIS processing plugin developed by the KIOS Research and Innovation Center of Excellence, University of Cyprus which operates within the QGIS environment, for providing an interface for the SU2 software, an open-source software suite for simulation and optimization in computational fluid dynamics (CFD), developed at Stanford University. This tool is particularly useful for engineers, researchers, and professionals engaged in CFD analysis, enabling them to efficiently prepare their simulation environments using geospatial data.
+
+
+tracker=https://github.com/KIOS-Research/QSU2/issues/
+repository=https://github.com/KIOS-Research/QSU2/
+# End of mandatory metadata
+
+# Recommended items:
+
+hasProcessingProvider=yes
+# Uncomment the following line and add your changelog:
+# changelog=
+
+# Tags are comma separated with spaces allowed
+tags=python, CFD, su2, dam, water
+
+homepage=https://github.com/KIOS-Research/QSU2
+category=Analysis
+icon=icon.png
+# experimental flag
+experimental=False
+
+# deprecated flag (applies to the whole plugin, not just a single version)
+deprecated=False
+
+# Since QGIS 3.8, a comma separated list of plugins to be installed
+# (or upgraded) can be specified.
+# Check the documentation for more information.
+# plugin_dependencies=
+
+Category of the plugin: Raster, Vector, Database or Web
+# category=
+
+# If the plugin can run on QGIS Server.
+server=False
+
