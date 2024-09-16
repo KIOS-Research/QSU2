@@ -142,100 +142,116 @@ class ExportMeshToSu2Algorithm(QgsProcessingAlgorithm):
         return {self.OUTPUT_FILE: output_file_path}
 
     def processLayers(self, inlet_layer=None, outlet_layer=None, mesh_layer=None):
-        # Initialize vertices and elements
-        vertices = {}
+        # Initialize vertices as set and use tuples for faster membership testing
+        vertices = set()
+        vertex_map = {}  # To store index mapping later
         elements = []
-        inlet_elements = []
-        outlet_elements = []
-        wall_elements = []
-        fluid_elements = []
 
-        # Convert inlet and outlet layer features to geometries for easy checking
-        if inlet_layer is not None:
-            inlet_geometries = [feature.geometry() for feature in inlet_layer.getFeatures()]
-        if outlet_layer is not None:
-            outlet_geometries = [feature.geometry() for feature in outlet_layer.getFeatures()]
+        inlet_elements, outlet_elements, wall_elements, fluid_elements = [], [], [], []
 
-        # Process the mesh layer to define fluid domain and classify elements
+        if inlet_layer:
+            inlet_geometries = [f.geometry() for f in inlet_layer.getFeatures()]
+            print(f"Inlet geometries: {len(inlet_geometries)} geometries found")
+        if outlet_layer:
+            outlet_geometries = [f.geometry() for f in outlet_layer.getFeatures()]
+
+        # Batch processing the mesh layer
         for feature in mesh_layer.getFeatures():
             geometry = feature.geometry()
-            if geometry.isMultipart():
-                polygons = geometry.asMultiPolygon()
-            else:
-                polygons = [geometry.asPolygon()]
+            polygons = geometry.asMultiPolygon() if geometry.isMultipart() else [geometry.asPolygon()]
 
             for polygon in polygons:
                 for ring in polygon:
-                    if len(ring) >= 4:  # A triangle in QGIS polygon format (including closing point)
-                        tri_points = ring[:-1]  # Exclude the closing point to get three points of the triangle
+                    if len(ring) >= 4:
+                        tri_points = ring[:-1]
                         element = []
 
                         for point in tri_points:
-                            qgs_point = QgsPointXY(point)
-                            if qgs_point not in vertices:
-                                vertices[qgs_point] = len(vertices) + 1  # Assign unique IDs to vertices
-                            element.append(vertices[qgs_point])
+                            vertex = (point.x(), point.y())  # Use tuple for faster comparison
+                            if vertex not in vertices:
+                                vertices.add(vertex)  # Add unique vertex
+                                vertex_map[vertex] = len(vertex_map) + 1  # Index mapping
+                            element.append(vertex_map[vertex])
 
-                        if len(element) == 3:  # Only process triangles
-                            fluid_elements.append(tuple(element))  # Add triangle as a fluid element
+                        if len(element) == 3:
+                            fluid_elements.append(tuple(element))
 
-                            # Classify element based on centroid
-                            centroid = QgsGeometry.fromPolylineXY([QgsPointXY(tri_points[0]), QgsPointXY(tri_points[1]),
+                            # Classify centroid here (inlet/outlet/etc.)
+                            centroid = QgsGeometry.fromPolylineXY([QgsPointXY(tri_points[0]),
+                                                                   QgsPointXY(tri_points[1]),
                                                                    QgsPointXY(tri_points[2])]).centroid().asPoint()
-                            if inlet_layer is not None:
-                                if any(inlet_geom.contains(centroid) for inlet_geom in inlet_geometries):
-                                    inlet_elements.append(tuple(element))
-                            if outlet_layer is not None:
-                                if any(outlet_geom.contains(centroid) for outlet_geom in outlet_geometries):
-                                    outlet_elements.append(tuple(element))
-                            if inlet_layer is not None and outlet_layer is not None:
-                                if not any(
-                                        inlet_geom.contains(centroid) for inlet_geom in inlet_geometries) and not any(
+
+                            # Classify as inlet, outlet, wall or fluid
+                            if inlet_layer and any(inlet_geom.contains(centroid) for inlet_geom in inlet_geometries):
+                                inlet_elements.append(tuple(element))
+                            elif outlet_layer and any(
                                     outlet_geom.contains(centroid) for outlet_geom in outlet_geometries):
-                                    wall_elements.append(tuple(element))
+                                outlet_elements.append(tuple(element))
+                            else:
+                                wall_elements.append(tuple(element))
                         elements.append(tuple(element))
 
-        return vertices, elements, inlet_elements, outlet_elements, wall_elements, fluid_elements
+        return vertex_map, elements, inlet_elements, outlet_elements, wall_elements, fluid_elements
 
     def writeSU2File(self, file, vertices, elements, inlet_elements, outlet_elements, wall_elements, fluid_elements):
+        # Writing the dimensions and the number of elements in the fluid domain
         file.write("NDIME= 2\n")
         file.write(f"NELEM= {len(fluid_elements)}\n")
+
+        # Write the fluid elements (triangles)
         for index, element in enumerate(fluid_elements):
             if len(element) == 3:
                 file.write(f"5 {element[0] - 1} {element[1] - 1} {element[2] - 1} {index}\n")
             else:
                 raise ValueError(f"Fluid element does not have 3 points: {element}")
 
+        # Write the vertices
         file.write(f"NPOIN= {len(vertices)}\n")
-        for point, index in vertices.items():
-            file.write(f"{point.x()} {point.y()} {index}\n")
+        for (x, y), index in vertices.items():
+            file.write(f"{x} {y} {index}\n")
+
+        # Boundary markers count
         file.write("NMARK= 5\n")
 
-        # Updated calls to writeBoundaryMarker with all required arguments
+        # Writing inlet, outlet, wall, and other boundaries using the provided method
         self.writeBoundaryMarker(file, 'inlet', inlet_elements, fluid_elements)
         self.writeBoundaryMarker(file, 'outlet', outlet_elements, fluid_elements)
         self.writeBoundaryMarker(file, 'wall', wall_elements, fluid_elements)
-        self.writeBoundaryMarker(file, 'fluid', fluid_elements, fluid_elements)
-        self.writeBoundaryMarker(file, 'Domain', fluid_elements, fluid_elements)
+        self.writeBoundaryMarker(file, 'fluid', fluid_elements, fluid_elements)  # Fluid domain elements
+        self.writeBoundaryMarker(file, 'Domain', fluid_elements, fluid_elements)  # Domain boundary
 
     def writeBoundaryMarker(self, file, tag, surface_elements, volume_elements):
         file.write(f"MARKER_TAG= {tag}\n")
-        valid_elements = [element for element in surface_elements if self.isConnectedToVolume(element, volume_elements)]
-        file.write(f"MARKER_ELEMS= {len(valid_elements)}\n")
+
+        # Create a set of volume element points for fast lookup
+        volume_points = set()
+        for volume_element in volume_elements:
+            volume_points.update(volume_element)
+
+        # Buffer for batch file writing
+        marker_lines = []
+
+        # Filter elements that are connected to the volume
+        valid_elements = []
+        for element in surface_elements:
+            # Check if all points in the surface element exist in the volume_points
+            if all(point in volume_points for point in element):
+                valid_elements.append(element)
+
+        marker_lines.append(f"MARKER_ELEMS= {len(valid_elements)}\n")
+
+        # Prepare data to write in batch
         for element in valid_elements:
-            if len(element) == 2:
-                file.write(f"3 {element[0] - 1} {element[1] - 1}\n")
-            elif len(element) == 3:  # For fluid elements which are triangles
-                file.write(f"5 {element[0] - 1} {element[1] - 1} {element[2] - 1}\n")
+            if len(element) == 2:  # If it's a line element (e.g., for boundary)
+                marker_lines.append(f"3 {element[0] - 1} {element[1] - 1}\n")
+            elif len(element) == 3:  # For triangular fluid elements
+                marker_lines.append(f"5 {element[0] - 1} {element[1] - 1} {element[2] - 1}\n")
             else:
                 raise ValueError(f"Unexpected element length: {len(element)}")
 
-    def isConnectedToVolume(self, surface_element, volume_elements):
-        # Check if surface element is part of any volume element
-        for volume_element in volume_elements:
-            if set(surface_element).issubset(set(volume_element)):
-                return True
-        return False
+        # Write all the marker lines in one go
+        file.write(''.join(marker_lines))
+        file.flush()
 
     def name(self):
         return 'export_su2'
