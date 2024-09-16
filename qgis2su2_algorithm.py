@@ -1,26 +1,22 @@
 # -*- coding: utf-8 -*-
-
-import random
-from os import path
-
 import numpy as np
-from qgis.PyQt.QtCore import QVariant
+import os
+import random
+import shutil
+import subprocess
 from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
-                       QgsProcessingProvider,
                        QgsProcessingParameterFeatureSource,
                        QgsProcessingParameterNumber,
                        QgsProcessingParameterFeatureSink,
                        QgsProcessingParameterFileDestination,
                        QgsFeatureSink,
-                       QgsVectorLayer,
                        QgsFeature,
-                       QgsGeometry,
-                       QgsField,
-                       QgsProject, QgsProcessingParameterFolderDestination,
-                       QgsPointXY, QgsWkbTypes, QgsProcessingParameterFile)
+                       QgsGeometry, QgsProcessingException,
+                       QgsProcessingParameterFolderDestination,
+                       QgsPointXY, QgsProcessingParameterFile)
 from scipy.spatial import Delaunay
-from shapely.geometry import Point, Polygon, MultiPolygon
+from shapely.geometry import Point, Polygon
 
 
 # Algorithm 1: Create Mesh
@@ -274,6 +270,7 @@ class ExportMeshToSu2Algorithm(QgsProcessingAlgorithm):
         return ExportMeshToSu2Algorithm()
 
 
+
 class RunSU2CFD(QgsProcessingAlgorithm):
     SU2_CFD_PATH = 'SU2_CFD_PATH'  # SU2 executable path
     SU2_FILE = 'SU2_FILE'  # SU2 input .su2 file
@@ -281,21 +278,16 @@ class RunSU2CFD(QgsProcessingAlgorithm):
     OUTPUT_FOLDER = 'OUTPUT_FOLDER'  # Output folder
 
     def initAlgorithm(self, config=None):
-        # Path to SU2 executable
-        self.addParameter(QgsProcessingParameterFile(
-            self.SU2_CFD_PATH, 'SU2 CFD Executable', fileFilter='*.exe'))  # Expecting an executable file (.exe)
+        self.addParameter(QgsProcessingParameterFile(self.SU2_CFD_PATH, 'SU2 CFD Executable', extension='exe'))
 
         # Path to SU2 input .su2 file
-        self.addParameter(QgsProcessingParameterFile(
-            self.SU2_FILE, 'SU2 Input File', fileFilter='*.su2'))  # Expecting an input .su2 file
+        self.addParameter(QgsProcessingParameterFile(self.SU2_FILE, 'SU2 Input File', extension='su2'))
 
         # Path to SU2 configuration .cfg file
-        self.addParameter(QgsProcessingParameterFile(
-            self.SU2_CFG_FILE, 'SU2 Configuration File', fileFilter='*.cfg'))  # Expecting a config file (.cfg)
+        self.addParameter(QgsProcessingParameterFile(self.SU2_CFG_FILE, 'SU2 Configuration File', extension='cfg'))
 
         # Output folder
-        self.addParameter(QgsProcessingParameterFolderDestination(
-            self.OUTPUT_FOLDER, 'Output Folder'))
+        self.addParameter(QgsProcessingParameterFolderDestination(self.OUTPUT_FOLDER, 'Output Folder'))
 
     def processAlgorithm(self, parameters, context, feedback):
         # Retrieve inputs
@@ -304,23 +296,50 @@ class RunSU2CFD(QgsProcessingAlgorithm):
         su2_cfg_file = self.parameterAsFile(parameters, self.SU2_CFG_FILE, context)
         output_folder = self.parameterAsString(parameters, self.OUTPUT_FOLDER, context)
 
-        # TODO: Update the cfg_file from su2_file
+        # Debugging: Log the file paths
+        feedback.pushInfo(f"SU2 CFD Executable Path: {su2_cfd_path}")
+        feedback.pushInfo(f"SU2 Input File Path: {su2_file}")
+        feedback.pushInfo(f"SU2 Config File Path: {su2_cfg_file}")
+        feedback.pushInfo(f"Output Folder Path: {output_folder}")
+
+        # Ensure paths are valid
+        if not su2_cfd_path or not su2_file or not su2_cfg_file:
+            raise QgsProcessingException('Invalid file paths provided.')
+
+        # Copy the .su2 file to the output folder (where the subprocess will run)
+        try:
+            feedback.pushInfo(f'Copying .su2 file to output folder: {output_folder}')
+            shutil.copy(su2_file, output_folder)
+            feedback.pushInfo(f'.su2 file successfully copied to {output_folder}')
+        except:
+            pass
+
+        # Set the current working directory to the output folder
+        os.chdir(output_folder)
 
         # Construct and run the SU2 command
         feedback.pushInfo('Running SU2 CFD Simulation...')
-        process = QProcess()
+        command = [su2_cfd_path, su2_cfg_file]
 
-        # Wrap paths with double quotes to handle spaces in file paths
-        command = [f'"{su2_cfd_path}"', f'"{su2_cfg_file}"']
-        process.setWorkingDirectory(output_folder)
-        process.start(command[0], command[1:])
+        try:
+            # Run the process and capture output in real-time
+            process = subprocess.Popen(command, cwd=output_folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       text=True, shell=True)
 
-        if not process.waitForStarted():
-            raise QgsProcessingException('Could not start SU2 process.')
+            # Read the output line by line and print to the feedback (QGIS Processing log)
+            for line in process.stdout:
+                feedback.pushInfo(line.strip())  # Print each line in real-time
 
-        # Wait for the process to finish
-        process.waitForFinished()
-        feedback.pushInfo('SU2 CFD Simulation completed.')
+            process.wait()  # Wait for the process to complete
+
+            # Check if the process completed successfully
+            if process.returncode != 0:
+                raise QgsProcessingException(f"SU2 CFD process failed with return code {process.returncode}.")
+
+            feedback.pushInfo('SU2 CFD Simulation completed successfully.')
+
+        except Exception as e:
+            raise QgsProcessingException(f"An error occurred while running SU2: {str(e)}")
 
         # Return the output folder as the result
         return {self.OUTPUT_FOLDER: output_folder}
@@ -343,3 +362,4 @@ class RunSU2CFD(QgsProcessingAlgorithm):
 
     def createInstance(self):
         return RunSU2CFD()
+
