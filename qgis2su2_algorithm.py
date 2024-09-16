@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+
+import random
+from os import path
+
+import numpy as np
+from qgis.PyQt.QtCore import QVariant
 from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
                        QgsProcessingProvider,
@@ -10,13 +17,9 @@ from qgis.core import (QgsProcessing,
                        QgsFeature,
                        QgsGeometry,
                        QgsField,
-                       QgsProject,
-                       QgsPointXY, QgsWkbTypes)
-from qgis.PyQt.QtCore import QVariant
+                       QgsProject, QgsProcessingParameterFolderDestination,
+                       QgsPointXY, QgsWkbTypes, QgsProcessingParameterFile)
 from scipy.spatial import Delaunay
-import random
-from os import path
-import numpy as np
 from shapely.geometry import Point, Polygon, MultiPolygon
 
 
@@ -84,8 +87,14 @@ class CreateMeshAlgorithm(QgsProcessingAlgorithm):
         return {self.OUTPUT_LAYER: dest_id}
 
     def shortHelpString(self):
-        return "This algorithm creates a mesh suitable for CFD simulations. " \
-               "Number of points determine mesh size. More points refer to refined mesh."
+        return (
+            "This algorithm generates a vector-based mesh suitable for Computational Fluid Dynamics (CFD) simulations.\n\n"
+            "The number of points determines the mesh resolution. A higher number of points will result in a more "
+            "refined mesh.\n\n"
+            "Inputs:\n"
+            "- Number of points: Specifies the number of points used to create the mesh grid. Increasing the number of points leads to a finer mesh.\n\n"
+            "Output:\n"
+            "- A mesh layer that can be used in CFD simulations.")
 
     def name(self):
         return 'vector_mesh_creation'
@@ -100,7 +109,6 @@ class CreateMeshAlgorithm(QgsProcessingAlgorithm):
 # Algorithm 2: Export to .su2 File
 class ExportMeshToSu2Algorithm(QgsProcessingAlgorithm):
     MESH_LAYER = 'MESH_LAYER'
-    OBJECT_LAYER = 'OBJECT_LAYER'
     INLET_LAYER = 'INLET_LAYER'
     OUTLET_LAYER = 'OUTLET_LAYER'
     OUTPUT_FILE = 'OUTPUT_FILE'
@@ -108,31 +116,33 @@ class ExportMeshToSu2Algorithm(QgsProcessingAlgorithm):
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterFeatureSource(
             self.MESH_LAYER, 'Mesh Layer', [QgsProcessing.TypeVectorPolygon]))
+        # Inlet Layer (Optional)
         self.addParameter(QgsProcessingParameterFeatureSource(
-            self.OBJECT_LAYER, 'Object Layer', [QgsProcessing.TypeVectorPolygon]))
+            self.INLET_LAYER, 'Inlet Layer', [QgsProcessing.TypeVectorPolygon], optional=True))
+
+        # Outlet Layer (Optional)
         self.addParameter(QgsProcessingParameterFeatureSource(
-            self.INLET_LAYER, 'Inlet Layer', [QgsProcessing.TypeVectorPolygon]))
-        self.addParameter(QgsProcessingParameterFeatureSource(
-            self.OUTLET_LAYER, 'Outlet Layer', [QgsProcessing.TypeVectorPolygon]))
+            self.OUTLET_LAYER, 'Outlet Layer', [QgsProcessing.TypeVectorPolygon], optional=True))
+
         self.addParameter(QgsProcessingParameterFileDestination(
             self.OUTPUT_FILE, 'Output .su2 file', fileFilter='SU2 file (*.su2)'))
 
     def processAlgorithm(self, parameters, context, feedback):
         mesh_layer = self.parameterAsVectorLayer(parameters, self.MESH_LAYER, context)
-        object_layer = self.parameterAsVectorLayer(parameters, self.OBJECT_LAYER, context)
         inlet_layer = self.parameterAsVectorLayer(parameters, self.INLET_LAYER, context)
         outlet_layer = self.parameterAsVectorLayer(parameters, self.OUTLET_LAYER, context)
         output_file_path = self.parameterAsFileOutput(parameters, self.OUTPUT_FILE, context)
 
         vertices, elements, inlet_elements, outlet_elements, wall_elements, fluid_elements = self.processLayers(
-            object_layer, inlet_layer, outlet_layer, mesh_layer)
+            inlet_layer, outlet_layer, mesh_layer)
 
         with open(output_file_path, 'w') as file:
             self.writeSU2File(file, vertices, elements, inlet_elements, outlet_elements, wall_elements, fluid_elements)
 
         return {self.OUTPUT_FILE: output_file_path}
 
-    def processLayers(self, object_layer, inlet_layer, outlet_layer, mesh_layer):
+    def processLayers(self, inlet_layer=None, outlet_layer=None, mesh_layer=None):
+        # Initialize vertices and elements
         vertices = {}
         elements = []
         inlet_elements = []
@@ -141,37 +151,12 @@ class ExportMeshToSu2Algorithm(QgsProcessingAlgorithm):
         fluid_elements = []
 
         # Convert inlet and outlet layer features to geometries for easy checking
-        inlet_geometries = [feature.geometry() for feature in inlet_layer.getFeatures()]
-        outlet_geometries = [feature.geometry() for feature in outlet_layer.getFeatures()]
+        if inlet_layer is not None:
+            inlet_geometries = [feature.geometry() for feature in inlet_layer.getFeatures()]
+        if outlet_layer is not None:
+            outlet_geometries = [feature.geometry() for feature in outlet_layer.getFeatures()]
 
-        # Process object layer to get vertices and elements
-        for feature in object_layer.getFeatures():
-            geometry = feature.geometry()
-            if geometry.isMultipart():
-                polygons = geometry.asMultiPolygon()
-            else:
-                polygons = [geometry.asPolygon()]
-
-            for polygon in polygons:
-                for ring in polygon:
-                    for i in range(len(ring) - 1):
-                        point1, point2 = QgsPointXY(ring[i]), QgsPointXY(ring[i + 1])
-                        if point1 not in vertices:
-                            vertices[point1] = len(vertices) + 1
-                        if point2 not in vertices:
-                            vertices[point2] = len(vertices) + 1
-                        element = (vertices[point1], vertices[point2])
-
-                        centroid = QgsGeometry.fromPolylineXY([point1, point2]).centroid().asPoint()
-                        if any(inlet_geom.contains(centroid) for inlet_geom in inlet_geometries):
-                            inlet_elements.append(element)
-                        elif any(outlet_geom.contains(centroid) for outlet_geom in outlet_geometries):
-                            outlet_elements.append(element)
-                        else:
-                            wall_elements.append(element)
-                        elements.append(element)
-
-        # Process mesh layer to define fluid domain
+        # Process the mesh layer to define fluid domain and classify elements
         for feature in mesh_layer.getFeatures():
             geometry = feature.geometry()
             if geometry.isMultipart():
@@ -182,15 +167,33 @@ class ExportMeshToSu2Algorithm(QgsProcessingAlgorithm):
             for polygon in polygons:
                 for ring in polygon:
                     if len(ring) >= 4:  # A triangle in QGIS polygon format (including closing point)
-                        tri_points = ring[:-1]  # Exclude the closing point
+                        tri_points = ring[:-1]  # Exclude the closing point to get three points of the triangle
                         element = []
+
                         for point in tri_points:
                             qgs_point = QgsPointXY(point)
                             if qgs_point not in vertices:
-                                vertices[qgs_point] = len(vertices) + 1
+                                vertices[qgs_point] = len(vertices) + 1  # Assign unique IDs to vertices
                             element.append(vertices[qgs_point])
-                        if len(element) == 3:
-                            fluid_elements.append(tuple(element))
+
+                        if len(element) == 3:  # Only process triangles
+                            fluid_elements.append(tuple(element))  # Add triangle as a fluid element
+
+                            # Classify element based on centroid
+                            centroid = QgsGeometry.fromPolylineXY([QgsPointXY(tri_points[0]), QgsPointXY(tri_points[1]),
+                                                                   QgsPointXY(tri_points[2])]).centroid().asPoint()
+                            if inlet_layer is not None:
+                                if any(inlet_geom.contains(centroid) for inlet_geom in inlet_geometries):
+                                    inlet_elements.append(tuple(element))
+                            if outlet_layer is not None:
+                                if any(outlet_geom.contains(centroid) for outlet_geom in outlet_geometries):
+                                    outlet_elements.append(tuple(element))
+                            if inlet_layer is not None and outlet_layer is not None:
+                                if not any(
+                                        inlet_geom.contains(centroid) for inlet_geom in inlet_geometries) and not any(
+                                    outlet_geom.contains(centroid) for outlet_geom in outlet_geometries):
+                                    wall_elements.append(tuple(element))
+                        elements.append(tuple(element))
 
         return vertices, elements, inlet_elements, outlet_elements, wall_elements, fluid_elements
 
@@ -238,12 +241,89 @@ class ExportMeshToSu2Algorithm(QgsProcessingAlgorithm):
         return 'export_su2'
 
     def shortHelpString(self):
-        return "This algorithm exports a mesh suitable for CFD simulations in .su2 format. " \
-               "Object layer is the main layer (e.g. dam), inlet layer is for inlets (air/water/species transport), " \
-               "outlet layer is for outlet and mesh layer is the one we created using `Create Mesh Vector`."
+        return (
+            "This algorithm exports a mesh suitable for CFD simulations in .su2 format.\n\n"
+            "Inputs:\n"
+            "- **Inlet Layer**: Specifies the inlet zones (e.g., for air, water, or species transport) in the mesh.\n"
+            "- **Outlet Layer**: Specifies the outlet zones in the mesh.\n"
+            "- **Mesh Layer**: The mesh layer that was created using the 'Create Vector Mesh' algorithm. This will be exported in .su2 format.\n\n"
+            "Output:\n"
+            "- The algorithm exports the mesh to a .su2 file, which is compatible with SU2 CFD simulations."
+        )
 
     def displayName(self):
-        return 'Export to SU2 File'
+        return 'Export SU2 File'
 
     def createInstance(self):
         return ExportMeshToSu2Algorithm()
+
+
+class RunSU2CFD(QgsProcessingAlgorithm):
+    SU2_CFD_PATH = 'SU2_CFD_PATH'  # SU2 executable path
+    SU2_FILE = 'SU2_FILE'  # SU2 input .su2 file
+    SU2_CFG_FILE = 'SU2_CFG_FILE'  # SU2 configuration .cfg file
+    OUTPUT_FOLDER = 'OUTPUT_FOLDER'  # Output folder
+
+    def initAlgorithm(self, config=None):
+        # Path to SU2 executable
+        self.addParameter(QgsProcessingParameterFile(
+            self.SU2_CFD_PATH, 'SU2 CFD Executable', fileFilter='*.exe'))  # Expecting an executable file (.exe)
+
+        # Path to SU2 input .su2 file
+        self.addParameter(QgsProcessingParameterFile(
+            self.SU2_FILE, 'SU2 Input File', fileFilter='*.su2'))  # Expecting an input .su2 file
+
+        # Path to SU2 configuration .cfg file
+        self.addParameter(QgsProcessingParameterFile(
+            self.SU2_CFG_FILE, 'SU2 Configuration File', fileFilter='*.cfg'))  # Expecting a config file (.cfg)
+
+        # Output folder
+        self.addParameter(QgsProcessingParameterFolderDestination(
+            self.OUTPUT_FOLDER, 'Output Folder'))
+
+    def processAlgorithm(self, parameters, context, feedback):
+        # Retrieve inputs
+        su2_cfd_path = self.parameterAsFile(parameters, self.SU2_CFD_PATH, context)
+        su2_file = self.parameterAsFile(parameters, self.SU2_FILE, context)
+        su2_cfg_file = self.parameterAsFile(parameters, self.SU2_CFG_FILE, context)
+        output_folder = self.parameterAsString(parameters, self.OUTPUT_FOLDER, context)
+
+        # TODO: Update the cfg_file from su2_file
+
+        # Construct and run the SU2 command
+        feedback.pushInfo('Running SU2 CFD Simulation...')
+        process = QProcess()
+
+        # Wrap paths with double quotes to handle spaces in file paths
+        command = [f'"{su2_cfd_path}"', f'"{su2_cfg_file}"']
+        process.setWorkingDirectory(output_folder)
+        process.start(command[0], command[1:])
+
+        if not process.waitForStarted():
+            raise QgsProcessingException('Could not start SU2 process.')
+
+        # Wait for the process to finish
+        process.waitForFinished()
+        feedback.pushInfo('SU2 CFD Simulation completed.')
+
+        # Return the output folder as the result
+        return {self.OUTPUT_FOLDER: output_folder}
+
+    def name(self):
+        return 'runsu2cfd'
+
+    def displayName(self):
+        return 'Run SU2 CFD'
+
+    def shortHelpString(self):
+        return ("This algorithm allows users to run SU2 CFD simulations directly from QGIS.\n\n"
+                "Inputs:\n"
+                "- SU2 executable path (.exe)\n"
+                "- SU2 input file (.su2)\n"
+                "- SU2 configuration file (.cfg)\n"
+                "- Output folder where simulation results will be saved\n\n"
+                "Once configured, the SU2 CFD executable will run the provided configuration file "
+                "and generate simulation results in the specified output folder.")
+
+    def createInstance(self):
+        return RunSU2CFD()

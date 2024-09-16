@@ -22,7 +22,7 @@
  ***************************************************************************/
 """
 
-__author__ = 'Mafooq Ul Hassan'
+__author__ = 'Marios S. Kyriakou, Mafooq Ul Hassan'
 __date__ = '2023-12-19'
 __copyright__ = '(C) 2023 by KIOS CoE'
 
@@ -30,9 +30,11 @@ __copyright__ = '(C) 2023 by KIOS CoE'
 
 __revision__ = '$Format:%H$'
 
+import inspect
 import os
 import sys
-import inspect
+
+from qgis.PyQt.QtCore import QVariant
 from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
                        QgsProcessingProvider,
@@ -47,7 +49,7 @@ from qgis.core import (QgsProcessing,
                        QgsField,
                        QgsProject,
                        QgsPointXY, QgsApplication)
-from qgis.PyQt.QtCore import QVariant
+
 from .qgis2su2_provider import qgis2su2Provider
 
 cmd_folder = os.path.split(inspect.getfile(inspect.currentframe()))[0]

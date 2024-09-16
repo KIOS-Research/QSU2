@@ -9,7 +9,7 @@
                               -------------------
         begin                : 2023-12-19
         copyright            : (C) 2023 by KIOS CoE
-        email                : hassan.syed@ucy.ac.cy
+        email                : kiriakou.marios@ucy.ac.cy, hassan.syed@ucy.ac.cy
  ***************************************************************************/
 
 /***************************************************************************
@@ -22,7 +22,7 @@
  ***************************************************************************/
 """
 
-__author__ = 'Mafooq Ul Hassan'
+__author__ = 'Marios S. Kyriakou, Mafooq Ul Hassan'
 __date__ = '2023-12-19'
 __copyright__ = '(C) 2023 by KIOS CoE'
 
@@ -31,7 +31,8 @@ __copyright__ = '(C) 2023 by KIOS CoE'
 __revision__ = '$Format:%H$'
 
 from qgis.core import QgsProcessingProvider
-from .qgis2su2_algorithm import CreateMeshAlgorithm, ExportMeshToSu2Algorithm
+
+from .qgis2su2_algorithm import CreateMeshAlgorithm, ExportMeshToSu2Algorithm, RunSU2CFD
 
 
 class qgis2su2Provider(QgsProcessingProvider):
@@ -41,7 +42,6 @@ class qgis2su2Provider(QgsProcessingProvider):
         Default constructor.
         """
         QgsProcessingProvider.__init__(self)
-
 
     def unload(self):
         """
@@ -56,6 +56,7 @@ class qgis2su2Provider(QgsProcessingProvider):
         """
         self.addAlgorithm(CreateMeshAlgorithm())
         self.addAlgorithm(ExportMeshToSu2Algorithm())
+        self.addAlgorithm(RunSU2CFD())
 
     def id(self):
         """
