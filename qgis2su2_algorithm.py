@@ -1,9 +1,20 @@
 # -*- coding: utf-8 -*-
-import numpy as np
+import glob
 import os
+import os
+import random
+import random
 import random
 import shutil
 import subprocess
+
+import matplotlib.pyplot as plt
+import numpy as np
+import numpy as np
+import numpy as np
+import pandas as pd
+from PIL import Image, ImageDraw
+from qgis.PyQt.QtCore import QCoreApplication, QUrl
 from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterFeatureSource,
@@ -15,11 +26,22 @@ from qgis.core import (QgsProcessing,
                        QgsGeometry, QgsProcessingException,
                        QgsProcessingParameterFolderDestination,
                        QgsPointXY, QgsProcessingParameterFile)
+from qgis.core import QgsProcessing, QgsProcessingAlgorithm, QgsProcessingParameterFile, QgsProcessingParameterString, \
+    QgsProcessingParameterFolderDestination, QgsProcessingParameterNumber
+from qgis.core import QgsProcessingAlgorithm, QgsProcessingParameterFeatureSource, QgsProcessingParameterNumber, \
+    QgsProcessingParameterFeatureSink, QgsFeature, QgsPointXY, QgsGeometry, QgsFeatureSink
+from qgis.core import QgsWkbTypes, QgsProcessingAlgorithm, QgsProcessingParameterFeatureSource, \
+    QgsProcessingParameterNumber, QgsFields, \
+    QgsProcessingParameterFeatureSink, QgsFeature, QgsPointXY, QgsGeometry, QgsFeatureSink
+from scipy.spatial import Delaunay
+from scipy.spatial import Delaunay
 from scipy.spatial import Delaunay
 from shapely.geometry import Point, Polygon
+from shapely.geometry import Polygon, Point
+from shapely.geometry import Polygon, Point
+from PyQt5.QtGui import QDesktopServices
 
 
-# Algorithm 1: Create Mesh
 class CreateMeshAlgorithm(QgsProcessingAlgorithm):
     INPUT_LAYER = 'INPUT_LAYER'
     POINT_COUNT = 'POINT_COUNT'
@@ -29,38 +51,47 @@ class CreateMeshAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFeatureSource(
             self.INPUT_LAYER, 'Input layer', [QgsProcessing.TypeVectorPolygon]))
         self.addParameter(QgsProcessingParameterNumber(
-            self.POINT_COUNT, 'Number of points', QgsProcessingParameterNumber.Integer, defaultValue=100))
+            self.POINT_COUNT, 'Number of cells', QgsProcessingParameterNumber.Integer, defaultValue=100))
         self.addParameter(QgsProcessingParameterFeatureSink(
             self.OUTPUT_LAYER, 'Output Mesh layer', QgsProcessing.TypeVectorPolygon))
 
     def processAlgorithm(self, parameters, context, feedback):
         source = self.parameterAsSource(parameters, self.INPUT_LAYER, context)
         point_count = self.parameterAsInt(parameters, self.POINT_COUNT, context)
+
+        # Create an empty QgsFields object for the sink
+        fields = QgsFields()  # No fields, just geometry
+
         (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT_LAYER, context,
-                                               source.fields(), source.wkbType(), source.sourceCrs())
+                                               fields,  # Empty fields object
+                                               QgsWkbTypes.Polygon,  # Specify geometry type as Polygon
+                                               source.sourceCrs())
 
         all_points = []
         polygons = []
 
+        # Pre-calculate geometries and bounds for faster point generation
         for feature in source.getFeatures():
             if feedback.isCanceled():
                 return {}
             geom = feature.geometry()
             if geom.isMultipart():
-                # For multipart features, treat each part as a separate polygon
                 for part in geom.asMultiPolygon():
-                    poly = Polygon(part[0])  # Assuming exterior ring
-                    polygons.append(poly)
+                    poly = Polygon(part[0])
+                    polygons.append((poly, poly.bounds))
                     all_points.extend(part[0])
             else:
-                poly = Polygon(geom.asPolygon()[0])  # Assuming exterior ring
-                polygons.append(poly)
+                poly = Polygon(geom.asPolygon()[0])
+                polygons.append((poly, poly.bounds))
                 all_points.extend(geom.asPolygon()[0])
 
-        # Generate internal points within each polygon
-        for poly in polygons:
-            minx, miny, maxx, maxy = poly.bounds
-            while len(all_points) < point_count:
+        # Cache existing point count to avoid unnecessary point generation
+        existing_point_count = len(all_points)
+
+        # Generate internal points within polygons only if more points are needed
+        for poly, bounds in polygons:
+            minx, miny, maxx, maxy = bounds
+            while len(all_points) < existing_point_count + point_count:
                 pnt = Point(random.uniform(minx, maxx), random.uniform(miny, maxy))
                 if poly.contains(pnt):
                     all_points.append((pnt.x, pnt.y))
@@ -69,26 +100,31 @@ class CreateMeshAlgorithm(QgsProcessingAlgorithm):
         if len(all_points) >= 3:
             points = np.array(all_points)
             triangulation = Delaunay(points)
+            triangles_to_add = []
+
             for simplex in triangulation.simplices:
                 triangle_points = [QgsPointXY(points[i][0], points[i][1]) for i in simplex]
                 triangle = QgsGeometry.fromPolygonXY([triangle_points])
-
-                # Check if the centroid of the triangle is within any of the polygons
                 centroid = triangle.centroid().asPoint()
-                if any(poly.contains(Point(centroid.x(), centroid.y())) for poly in polygons):
+
+                # Check if centroid is within any of the polygons (cached check)
+                if any(poly.contains(Point(centroid.x(), centroid.y())) for poly, _ in polygons):
                     feature = QgsFeature()
                     feature.setGeometry(triangle)
-                    sink.addFeature(feature, QgsFeatureSink.FastInsert)
+                    triangles_to_add.append(feature)
+
+            # Add features in bulk to the sink
+            sink.addFeatures(triangles_to_add, QgsFeatureSink.FastInsert)
 
         return {self.OUTPUT_LAYER: dest_id}
 
     def shortHelpString(self):
         return (
             "This algorithm generates a vector-based mesh suitable for Computational Fluid Dynamics (CFD) simulations.\n\n"
-            "The number of points determines the mesh resolution. A higher number of points will result in a more "
+            "The number of cells determines the mesh resolution. A higher number of cells will result in a more "
             "refined mesh.\n\n"
             "Inputs:\n"
-            "- Number of points: Specifies the number of points used to create the mesh grid. Increasing the number of points leads to a finer mesh.\n\n"
+            "- Number of cells: Specifies the number of cells used to create the mesh grid. Increasing the number of cells leads to a finer mesh.\n\n"
             "Output:\n"
             "- A mesh layer that can be used in CFD simulations.")
 
@@ -121,7 +157,7 @@ class ExportMeshToSu2Algorithm(QgsProcessingAlgorithm):
             self.OUTLET_LAYER, 'Outlet Layer', [QgsProcessing.TypeVectorPolygon], optional=True))
 
         self.addParameter(QgsProcessingParameterFileDestination(
-            self.OUTPUT_FILE, 'Output .su2 file', fileFilter='SU2 file (*.su2)'))
+            self.OUTPUT_FILE, 'Output SU2 file', fileFilter='SU2 file (*.su2)'))
 
     def processAlgorithm(self, parameters, context, feedback):
         mesh_layer = self.parameterAsVectorLayer(parameters, self.MESH_LAYER, context)
@@ -159,7 +195,7 @@ class ExportMeshToSu2Algorithm(QgsProcessingAlgorithm):
             for polygon in polygons:
                 for ring in polygon:
                     if len(ring) >= 4:
-                        tri_points = ring[:-1]
+                        tri_points = ring[:-1]  # Ignore the last point (closed polygon)
                         element = []
 
                         for point in tri_points:
@@ -177,14 +213,19 @@ class ExportMeshToSu2Algorithm(QgsProcessingAlgorithm):
                                                                    QgsPointXY(tri_points[1]),
                                                                    QgsPointXY(tri_points[2])]).centroid().asPoint()
 
-                            # Classify as inlet, outlet, wall or fluid
-                            if inlet_layer and any(inlet_geom.contains(centroid) for inlet_geom in inlet_geometries):
+                            # Classify as inlet, outlet, wall or fluid based on centroid or polygon containment
+                            triangle_geom = QgsGeometry.fromPolygonXY([tri_points])  # Create geometry of triangle
+
+                            if inlet_layer and any(inlet_geom.contains(centroid) or inlet_geom.intersects(triangle_geom)
+                                                   for inlet_geom in inlet_geometries):
                                 inlet_elements.append(tuple(element))
                             elif outlet_layer and any(
-                                    outlet_geom.contains(centroid) for outlet_geom in outlet_geometries):
+                                    outlet_geom.contains(centroid) or outlet_geom.intersects(triangle_geom)
+                                    for outlet_geom in outlet_geometries):
                                 outlet_elements.append(tuple(element))
                             else:
                                 wall_elements.append(tuple(element))
+
                         elements.append(tuple(element))
 
         return vertex_map, elements, inlet_elements, outlet_elements, wall_elements, fluid_elements
@@ -356,10 +397,119 @@ class RunSU2CFD(QgsProcessingAlgorithm):
                 "- SU2 executable path (.exe)\n"
                 "- SU2 input file (.su2)\n"
                 "- SU2 configuration file (.cfg)\n"
-                "- Output folder where simulation results will be saved\n\n"
+                "- Output folder where simulation results will be saved in CSV files.\n\n"
                 "Once configured, the SU2 CFD executable will run the provided configuration file "
                 "and generate simulation results in the specified output folder.")
 
     def createInstance(self):
         return RunSU2CFD()
+
+
+class PollutantDistributionGifAlgorithm(QgsProcessingAlgorithm):
+    # Define input parameters and output
+    CSV_FOLDER = 'CSV_FOLDER'
+    PARAMETER = 'PARAMETER'
+    OUTPUT_GIF_FILE = 'OUTPUT_GIF_FILE'
+    DURATION = 'DURATION'
+
+    def initAlgorithm(self, config=None):
+        # Add input for the folder containing CSV files
+        self.addParameter(QgsProcessingParameterFile(
+            self.CSV_FOLDER,
+            self.tr('Directory containing CSV files'),
+            behavior=QgsProcessingParameterFile.Folder
+        ))
+
+        # Add input for the parameter to be plotted, with examples
+        self.addParameter(QgsProcessingParameterString(
+            self.PARAMETER,
+            self.tr('Parameter to plot (e.g., Species_0, Pressure, Velocity_x, Velocity_y, Residual_Species_0)')
+        ))
+
+        # Add input for the GIF output file
+        self.addParameter(QgsProcessingParameterFileDestination(
+            self.OUTPUT_GIF_FILE, 'GIF Output File', fileFilter='GIF file (*.gif)'))
+
+        # Add input for frame duration (optional)
+        self.addParameter(QgsProcessingParameterNumber(
+            self.DURATION,
+            self.tr('Frame duration in milliseconds (default is 200ms)'),
+            defaultValue=200
+        ))
+
+    def processAlgorithm(self, parameters, context, feedback):
+        # Get input values
+        csv_folder = self.parameterAsFile(parameters, self.CSV_FOLDER, context)
+        parameter = self.parameterAsString(parameters, self.PARAMETER, context)
+        output_gif_path = self.parameterAsFileOutput(parameters, self.OUTPUT_GIF_FILE, context)
+        duration = self.parameterAsInt(parameters, self.DURATION, context)
+
+        # Find CSV files in the specified folder
+        csv_files_pattern = os.path.join(csv_folder, 'result_*.csv')
+        csv_files = glob.glob(csv_files_pattern)
+
+        if not csv_files:
+            raise QgsProcessingException('No CSV files found in the specified folder')
+
+        image_files = []
+
+        def plot_pressure_from_csv(csv_file_path, parameter, output_image_path):
+            data = pd.read_csv(csv_file_path)
+            x = data['x']
+            y = data['y']
+            variable = data[parameter]
+
+            plt.figure(figsize=(16, 16))
+            scatter = plt.scatter(x, y, c=variable, cmap='jet_r', s=10, vmax=np.max(variable), vmin=np.min(variable))
+            plt.title(f'{parameter} Distribution with Boundary')
+            plt.xlabel('Longitude')
+            plt.ylabel('Latitude')
+
+            # Add color bar as a legend
+            cbar = plt.colorbar(scatter)
+            cbar.set_label(parameter)  # Label the color bar with the parameter name
+
+            plt.savefig(output_image_path)
+            plt.close()
+
+        # Iterate through the CSV files, create plots, and save them as images
+        for i, csv_file in enumerate(csv_files):
+            if i>4:
+                feedback.pushInfo(f"Processing file {i + 1}/{len(csv_files)}: {os.path.basename(csv_file)}")
+                image_file_path = os.path.join(os.path.dirname(output_gif_path), f'frame_{i}.png')
+                image_files.append(image_file_path)
+
+                if not os.path.exists(image_file_path):  # Avoid re-generating images
+                    plot_pressure_from_csv(csv_file, parameter, image_file_path)
+
+            feedback.setProgress(int((i + 1) / len(csv_files) * 100))
+
+        # Create a GIF from the image files
+        feedback.pushInfo("Creating GIF...")
+        images = [Image.open(image) for image in image_files]
+        images[0].save(
+            output_gif_path,
+            save_all=True,
+            append_images=images[1:],
+            duration=duration,
+            loop=0
+        )
+
+        feedback.pushInfo(f"GIF created and saved as {output_gif_path}")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(output_gif_path))
+        feedback.pushInfo(f"The GIF has been opened automatically.")
+
+        return {self.OUTPUT_GIF_FILE: output_gif_path}
+
+    def name(self):
+        return 'pollutant_distribution_gif'
+
+    def displayName(self):
+        return self.tr('Visualize Pollutant Distribution GIF')
+
+    def tr(self, string):
+        return QCoreApplication.translate(self.__class__.__name__, string)
+
+    def createInstance(self):
+        return PollutantDistributionGifAlgorithm()
 
