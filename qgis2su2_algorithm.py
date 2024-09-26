@@ -51,7 +51,7 @@ class CreateMeshAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFeatureSource(
             self.INPUT_LAYER, 'Input layer', [QgsProcessing.TypeVectorPolygon]))
         self.addParameter(QgsProcessingParameterNumber(
-            self.POINT_COUNT, 'Number of cells', QgsProcessingParameterNumber.Integer, defaultValue=100))
+            self.POINT_COUNT, 'Number of nodes', QgsProcessingParameterNumber.Integer, defaultValue=100))
         self.addParameter(QgsProcessingParameterFeatureSink(
             self.OUTPUT_LAYER, 'Output Mesh layer', QgsProcessing.TypeVectorPolygon))
 
@@ -121,10 +121,11 @@ class CreateMeshAlgorithm(QgsProcessingAlgorithm):
     def shortHelpString(self):
         return (
             "This algorithm generates a vector-based mesh suitable for Computational Fluid Dynamics (CFD) simulations.\n\n"
-            "The number of cells determines the mesh resolution. A higher number of cells will result in a more "
+            "The number of nodes determines the mesh resolution. A higher number of nodes will result in a more "
             "refined mesh.\n\n"
             "Inputs:\n"
-            "- Number of cells: Specifies the number of cells used to create the mesh grid. Increasing the number of cells leads to a finer mesh.\n\n"
+            "- Number of nodes: Specifies the number of nodes used to create the mesh grid. Increasing the number of "
+            "nodes leads to a finer mesh.\n\n"
             "Output:\n"
             "- A mesh layer that can be used in CFD simulations.")
 
