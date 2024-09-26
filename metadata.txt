@@ -6,7 +6,7 @@
 name=QSU2
 qgisMinimumVersion=3.0
 description=QSU2 for CFD simulations
-version=1.0
+version=0.2
 author=Syed Mafooq Ul Hassan, Marios S. Kyriakou, Demetrios G. Eliades, KIOS Research and Innovation Center of Excellence (KIOS CoE)
 email=hassan.syed@ucy.ac.cy, mkiria01@ucy.ac.cy, eldemet@ucy.ac.cy
 
